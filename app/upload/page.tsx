@@ -16,13 +16,12 @@ const EMPTY: UploadFormData = {
 }
 
 export default function UploadPage() {
-  const [form,    setForm]    = useState<UploadFormData>(EMPTY)
-  const [user,    setUser]    = useState<any>(null)
-  const [loading, setLoading] = useState(false)
-  const [status,  setStatus]  = useState<'idle'|'success'|'error'>('idle')
-  const [message, setMessage] = useState('')
-  const [drag,    setDrag]    = useState(false)
-  // Debug log — shows every step on screen so we can see what fails on mobile
+  const [form,     setForm]     = useState<UploadFormData>(EMPTY)
+  const [user,     setUser]     = useState<any>(null)
+  const [loading,  setLoading]  = useState(false)
+  const [status,   setStatus]   = useState<'idle'|'success'|'error'>('idle')
+  const [message,  setMessage]  = useState('')
+  const [drag,     setDrag]     = useState(false)
   const [debugLog, setDebugLog] = useState<string[]>([])
 
   function log(msg: string) {
@@ -35,7 +34,7 @@ export default function UploadPage() {
     createClient().auth.getUser().then(({ data, error }) => {
       if (error) log(`Auth error: ${error.message}`)
       else if (data.user) log(`Logged in as: ${data.user.email}`)
-      else log('Not logged in')
+      else log('NOT logged in')
       setUser(data.user)
     })
   }, [])
@@ -51,7 +50,7 @@ export default function UploadPage() {
 
   function handleFile(file: File | undefined) {
     if (!file) return
-    log(`File selected: ${file.name} — ${file.type} — ${(file.size/1024).toFixed(0)}KB`)
+    log(`File selected: ${file.name} | type: ${file.type} | size: ${(file.size/1024).toFixed(0)}KB`)
     if (file.type !== 'application/pdf') {
       setMessage('Only PDF files are allowed.'); setStatus('error'); return
     }
@@ -67,46 +66,42 @@ export default function UploadPage() {
     if (!user)      { setMessage('Please sign in to upload.'); setStatus('error'); return }
     if (!form.file) { setMessage('Please select a PDF file.'); setStatus('error'); return }
 
-    setLoading(true); setStatus('idle')
-    setDebugLog([]) // clear log on new attempt
+    setLoading(true)
+    setStatus('idle')
+    setDebugLog([]) // clear old logs
 
     try {
-      log('Starting upload...')
+      log('--- Upload started ---')
       const supabase = createClient()
 
-      // Step 1 — verify session is valid
-      log('Checking session...')
+      // Step 1 — check session
+      log('Step 1: Checking session...')
       const { data: sessionData, error: sessionError } = await supabase.auth.getSession()
       if (sessionError) throw new Error(`Session error: ${sessionError.message}`)
-      if (!sessionData.session) throw new Error('No active session — please sign out and sign in again')
-      log(`Session valid — token expires: ${new Date(sessionData.session.expires_at! * 1000).toLocaleTimeString()}`)
+      if (!sessionData.session) throw new Error('No session found — please sign out and sign in again')
+      log(`Session OK — user: ${sessionData.session.user.email}`)
 
-      // Step 2 — upload file
+      // Step 2 — upload file to storage
       const fileName = `${Date.now()}_${form.file.name.replace(/\s+/g,'_')}`
       const filePath = `papers/${fileName}`
-      log(`Uploading file to storage: ${filePath}`)
+      log(`Step 2: Uploading file → ${filePath}`)
 
       const { data: storageData, error: storageError } = await supabase.storage
         .from('papers')
-        .upload(filePath, form.file, {
-          contentType: 'application/pdf',
-          upsert: false
-        })
+        .upload(filePath, form.file, { contentType: 'application/pdf', upsert: false })
 
-      if (storageError) {
-        log(`Storage error: ${storageError.message}`)
-        throw new Error(`Storage failed: ${storageError.message}`)
-      }
-      log(`File uploaded successfully: ${storageData.path}`)
+      if (storageError) throw new Error(`Storage failed: ${storageError.message}`)
+      log(`Step 2: File uploaded OK → ${storageData.path}`)
 
       // Step 3 — get public URL
+      log('Step 3: Getting public URL...')
       const { data: { publicUrl } } = supabase.storage
         .from('papers')
         .getPublicUrl(filePath)
-      log(`Public URL: ${publicUrl}`)
+      log(`Step 3: URL → ${publicUrl}`)
 
       // Step 4 — insert to database
-      log('Saving to database...')
+      log('Step 4: Saving to database...')
       const { error: dbError } = await supabase.from('papers').insert({
         course_name:  form.course_name,
         course_code:  form.course_code,
@@ -124,14 +119,12 @@ export default function UploadPage() {
         is_approved:  false,
       })
 
-      if (dbError) {
-        log(`Database error: ${dbError.message}`)
-        throw new Error(`Database failed: ${dbError.message}`)
-      }
+      if (dbError) throw new Error(`Database failed: ${dbError.message}`)
+      log('Step 4: Saved to database OK')
 
-      log('Upload complete!')
+      log('--- Upload complete! ---')
       setStatus('success')
-      setMessage('Paper uploaded! It will appear after admin approval.')
+      setMessage('Paper uploaded successfully! It will appear after admin approval.')
       setForm(EMPTY)
 
     } catch (err: any) {
@@ -143,7 +136,7 @@ export default function UploadPage() {
     setLoading(false)
   }
 
-  const depts   = form.faculty    ? getDeptsByFaculty(form.faculty)    : []
+  const depts   = form.faculty    ? getDeptsByFaculty(form.faculty)   : []
   const degrees = form.department ? getDegreesForDept(form.department) : []
 
   if (!user) {
@@ -169,7 +162,6 @@ export default function UploadPage() {
   return (
     <div className="min-h-screen bg-slate-950 pb-16">
 
-      {/* Header */}
       <div className="bg-slate-900 border-b border-slate-800">
         <div className="max-w-3xl mx-auto px-4 py-4 flex items-center gap-4">
           <Link href="/browse" className="text-slate-500 hover:text-white transition-colors">
@@ -200,23 +192,32 @@ export default function UploadPage() {
           </div>
         )}
 
-        {/* DEBUG LOG — shows on screen so you can see on mobile */}
+        {/* ── DEBUG LOG BOX — visible on screen including mobile ── */}
         {debugLog.length > 0 && (
-          <div className="bg-slate-900 border border-slate-700 rounded-xl p-4 mb-6">
-            <p className="text-slate-400 text-xs font-bold uppercase tracking-widest mb-2">Debug Log</p>
-            {debugLog.map((line, i) => (
-              <p key={i} className={`text-xs font-mono ${
-                line.includes('FAILED') || line.includes('error') ? 'text-red-400' :
-                line.includes('complete') || line.includes('success') ? 'text-green-400' :
-                'text-slate-400'
-              }`}>{line}</p>
-            ))}
+          <div className="bg-slate-900 border-2 border-slate-700 rounded-xl p-4 mb-6">
+            <p className="text-slate-400 text-xs font-bold uppercase tracking-widest mb-3">
+              Debug Log — Screenshot this and share
+            </p>
+            <div className="space-y-1">
+              {debugLog.map((line, i) => (
+                <p key={i} className={`text-xs font-mono leading-relaxed ${
+                  line.includes('FAILED') || line.includes('error') || line.includes('Error')
+                    ? 'text-red-400 font-bold'
+                    : line.includes('complete') || line.includes('OK')
+                    ? 'text-green-400'
+                    : line.includes('Step')
+                    ? 'text-sky-400'
+                    : 'text-slate-400'
+                }`}>
+                  {line}
+                </p>
+              ))}
+            </div>
           </div>
         )}
 
         <form onSubmit={handleSubmit} className="space-y-6">
 
-          {/* File drop zone */}
           <div>
             <label className="label">PDF File *</label>
             <div
@@ -252,14 +253,13 @@ export default function UploadPage() {
               ) : (
                 <>
                   <Upload size={32} className="text-slate-600 mx-auto mb-3" />
-                  <p className="text-white text-sm font-medium">Tap to select PDF</p>
+                  <p className="text-white text-sm font-medium">Drop PDF here or click to browse</p>
                   <p className="text-slate-500 text-xs mt-1">PDF only · Max 5MB</p>
                 </>
               )}
             </div>
           </div>
 
-          {/* Course info */}
           <div className="card p-6 space-y-4">
             <h3 className="text-white font-semibold text-sm">Course Information</h3>
             <div className="grid md:grid-cols-2 gap-4">
@@ -284,7 +284,6 @@ export default function UploadPage() {
             </div>
           </div>
 
-          {/* Academic info */}
           <div className="card p-6 space-y-4">
             <h3 className="text-white font-semibold text-sm">Academic Details</h3>
             <div className="grid md:grid-cols-2 gap-4">
@@ -295,7 +294,9 @@ export default function UploadPage() {
                   <select required className="select pr-8" value={form.faculty}
                           onChange={e => set('faculty', e.target.value)}>
                     <option value="">Select Faculty</option>
-                    {UOG_DATA.faculties.map(f => <option key={f.id} value={f.name}>{f.name}</option>)}
+                    {UOG_DATA.faculties.map(f => (
+                      <option key={f.id} value={f.id}>{f.name}</option>
+                    ))}
                   </select>
                   <ChevronDown size={12} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-500 pointer-events-none" />
                 </div>
@@ -308,7 +309,9 @@ export default function UploadPage() {
                           onChange={e => set('department', e.target.value)}
                           disabled={!form.faculty}>
                     <option value="">Select Department</option>
-                    {depts.map(d => <option key={d.id} value={d.name}>{d.name}</option>)}
+                    {depts.map(d => (
+                      <option key={d.id} value={d.id}>{d.name}</option>
+                    ))}
                   </select>
                   <ChevronDown size={12} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-500 pointer-events-none" />
                 </div>
@@ -321,7 +324,9 @@ export default function UploadPage() {
                           onChange={e => set('degree', e.target.value)}
                           disabled={!form.department}>
                     <option value="">Select Degree</option>
-                    {degrees.map(d => <option key={d} value={d}>{d}</option>)}
+                    {degrees.map(d => (
+                      <option key={d} value={d}>{d}</option>
+                    ))}
                   </select>
                   <ChevronDown size={12} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-500 pointer-events-none" />
                 </div>
@@ -383,7 +388,7 @@ export default function UploadPage() {
           </button>
 
           <p className="text-center text-slate-600 text-xs">
-            Papers are reviewed by admin before going live.
+            Papers are reviewed by admin before going live — usually within 24 hours.
           </p>
         </form>
       </div>
