@@ -22,21 +22,10 @@ export default function UploadPage() {
   const [status,   setStatus]   = useState<'idle'|'success'|'error'>('idle')
   const [message,  setMessage]  = useState('')
   const [drag,     setDrag]     = useState(false)
-  const [debugLog, setDebugLog] = useState<string[]>([])
-
-  function log(msg: string) {
-    console.log(msg)
-    setDebugLog(p => [...p, `${new Date().toLocaleTimeString()}: ${msg}`])
-  }
+  const [step,     setStep]     = useState('')
 
   useEffect(() => {
-    log('Page loaded — checking auth...')
-    createClient().auth.getUser().then(({ data, error }) => {
-      if (error) log(`Auth error: ${error.message}`)
-      else if (data.user) log(`Logged in as: ${data.user.email}`)
-      else log('NOT logged in')
-      setUser(data.user)
-    })
+    createClient().auth.getUser().then(({ data }) => setUser(data.user))
   }, [])
 
   function set(key: keyof UploadFormData, val: any) {
@@ -50,7 +39,6 @@ export default function UploadPage() {
 
   function handleFile(file: File | undefined) {
     if (!file) return
-    log(`File selected: ${file.name} | type: ${file.type} | size: ${(file.size/1024).toFixed(0)}KB`)
     if (file.type !== 'application/pdf') {
       setMessage('Only PDF files are allowed.'); setStatus('error'); return
     }
@@ -66,43 +54,15 @@ export default function UploadPage() {
     if (!user)      { setMessage('Please sign in to upload.'); setStatus('error'); return }
     if (!form.file) { setMessage('Please select a PDF file.'); setStatus('error'); return }
 
-    setLoading(true)
-    setStatus('idle')
-    setDebugLog([]) // clear old logs
+    setLoading(true); setStatus('idle'); setStep('Preparing upload...')
 
     try {
-      log('--- Upload started ---')
-      const supabase = createClient()
-
-      // Step 1 — check session
-      log('Step 1: Checking session...')
-      const { data: sessionData, error: sessionError } = await supabase.auth.getSession()
-      if (sessionError) throw new Error(`Session error: ${sessionError.message}`)
-      if (!sessionData.session) throw new Error('No session found — please sign out and sign in again')
-      log(`Session OK — user: ${sessionData.session.user.email}`)
-
-      // Step 2 — upload file to storage
-      const fileName = `${Date.now()}_${form.file.name.replace(/\s+/g,'_')}`
-      const filePath = `papers/${fileName}`
-      log(`Step 2: Uploading file → ${filePath}`)
-
-      const { data: storageData, error: storageError } = await supabase.storage
-        .from('papers')
-        .upload(filePath, form.file, { contentType: 'application/pdf', upsert: false })
-
-      if (storageError) throw new Error(`Storage failed: ${storageError.message}`)
-      log(`Step 2: File uploaded OK → ${storageData.path}`)
-
-      // Step 3 — get public URL
-      log('Step 3: Getting public URL...')
-      const { data: { publicUrl } } = supabase.storage
-        .from('papers')
-        .getPublicUrl(filePath)
-      log(`Step 3: URL → ${publicUrl}`)
-
-      // Step 4 — insert to database
-      log('Step 4: Saving to database...')
-      const { error: dbError } = await supabase.from('papers').insert({
+      // Use FormData to send to our API route
+      // This goes: Mobile → Vercel server → Supabase
+      // NO direct mobile → Supabase connection = NO CORS issues
+      const formData = new FormData()
+      formData.append('file', form.file)
+      formData.append('metadata', JSON.stringify({
         course_name:  form.course_name,
         course_code:  form.course_code,
         faculty:      form.faculty,
@@ -113,22 +73,30 @@ export default function UploadPage() {
         exam_type:    form.exam_type,
         year:         form.year,
         teacher_name: form.teacher_name,
-        file_url:     publicUrl,
-        file_name:    form.file.name,
         uploaded_by:  user.email,
-        is_approved:  false,
+      }))
+
+      setStep('Uploading to server...')
+
+      const response = await fetch('/api/upload', {
+        method: 'POST',
+        body:   formData,
+        // NO Content-Type header — browser sets it automatically with boundary
       })
 
-      if (dbError) throw new Error(`Database failed: ${dbError.message}`)
-      log('Step 4: Saved to database OK')
+      const result = await response.json()
 
-      log('--- Upload complete! ---')
+      if (!response.ok) {
+        throw new Error(result.error || 'Upload failed')
+      }
+
+      setStep('')
       setStatus('success')
       setMessage('Paper uploaded successfully! It will appear after admin approval.')
       setForm(EMPTY)
 
     } catch (err: any) {
-      log(`FAILED: ${err.message}`)
+      setStep('')
       setStatus('error')
       setMessage(err.message || 'Upload failed. Please try again.')
     }
@@ -176,7 +144,6 @@ export default function UploadPage() {
 
       <div className="max-w-3xl mx-auto px-4 py-8">
 
-        {/* Success */}
         {status === 'success' && (
           <div className="bg-green-500/10 border border-green-500/30 rounded-xl p-5 mb-6 flex items-start gap-3">
             <CheckCircle size={20} className="text-green-400 shrink-0 mt-0.5" />
@@ -184,7 +151,6 @@ export default function UploadPage() {
           </div>
         )}
 
-        {/* Error */}
         {status === 'error' && (
           <div className="bg-red-500/10 border border-red-500/30 rounded-xl p-5 mb-6 flex items-start gap-3">
             <AlertCircle size={20} className="text-red-400 shrink-0 mt-0.5" />
@@ -192,27 +158,10 @@ export default function UploadPage() {
           </div>
         )}
 
-        {/* ── DEBUG LOG BOX — visible on screen including mobile ── */}
-        {debugLog.length > 0 && (
-          <div className="bg-slate-900 border-2 border-slate-700 rounded-xl p-4 mb-6">
-            <p className="text-slate-400 text-xs font-bold uppercase tracking-widest mb-3">
-              Debug Log — Screenshot this and share
-            </p>
-            <div className="space-y-1">
-              {debugLog.map((line, i) => (
-                <p key={i} className={`text-xs font-mono leading-relaxed ${
-                  line.includes('FAILED') || line.includes('error') || line.includes('Error')
-                    ? 'text-red-400 font-bold'
-                    : line.includes('complete') || line.includes('OK')
-                    ? 'text-green-400'
-                    : line.includes('Step')
-                    ? 'text-sky-400'
-                    : 'text-slate-400'
-                }`}>
-                  {line}
-                </p>
-              ))}
-            </div>
+        {step && (
+          <div className="bg-sky-500/10 border border-sky-500/30 rounded-xl p-4 mb-6 flex items-center gap-3">
+            <Loader2 size={18} className="animate-spin text-sky-400" />
+            <p className="text-sky-300 text-sm font-semibold">{step}</p>
           </div>
         )}
 
@@ -230,13 +179,8 @@ export default function UploadPage() {
                           ${form.file ? 'border-brand-500 bg-brand-500/5' : 'border-slate-700 hover:border-slate-500'}`}
               onClick={() => document.getElementById('file-input')?.click()}
             >
-              <input
-                id="file-input"
-                type="file"
-                accept=".pdf,application/pdf"
-                className="hidden"
-                onChange={e => handleFile(e.target.files?.[0])}
-              />
+              <input id="file-input" type="file" accept=".pdf,application/pdf"
+                     className="hidden" onChange={e => handleFile(e.target.files?.[0])} />
               {form.file ? (
                 <div className="flex items-center justify-center gap-3">
                   <FileText size={24} className="text-brand-400" />
@@ -253,7 +197,7 @@ export default function UploadPage() {
               ) : (
                 <>
                   <Upload size={32} className="text-slate-600 mx-auto mb-3" />
-                  <p className="text-white text-sm font-medium">Drop PDF here or click to browse</p>
+                  <p className="text-white text-sm font-medium">Tap to select PDF</p>
                   <p className="text-slate-500 text-xs mt-1">PDF only · Max 5MB</p>
                 </>
               )}
