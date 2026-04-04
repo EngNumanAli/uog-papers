@@ -57,9 +57,6 @@ export default function UploadPage() {
     setLoading(true); setStatus('idle'); setStep('Preparing upload...')
 
     try {
-      // Use FormData to send to our API route
-      // This goes: Mobile → Vercel server → Supabase
-      // NO direct mobile → Supabase connection = NO CORS issues
       const formData = new FormData()
       formData.append('file', form.file)
       formData.append('metadata', JSON.stringify({
@@ -81,7 +78,6 @@ export default function UploadPage() {
       const response = await fetch('/api/upload', {
         method: 'POST',
         body:   formData,
-        // NO Content-Type header — browser sets it automatically with boundary
       })
 
       const result = await response.json()
@@ -155,13 +151,6 @@ export default function UploadPage() {
           <div className="bg-red-500/10 border border-red-500/30 rounded-xl p-5 mb-6 flex items-start gap-3">
             <AlertCircle size={20} className="text-red-400 shrink-0 mt-0.5" />
             <p className="text-red-300 text-sm">{message}</p>
-          </div>
-        )}
-
-        {step && (
-          <div className="bg-sky-500/10 border border-sky-500/30 rounded-xl p-4 mb-6 flex items-center gap-3">
-            <Loader2 size={18} className="animate-spin text-sky-400" />
-            <p className="text-sky-300 text-sm font-semibold">{step}</p>
           </div>
         )}
 
